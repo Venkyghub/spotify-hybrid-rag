@@ -1,0 +1,63 @@
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Python virtual environments
+myvenv1/
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Pytest and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Generated FAISS indexes
+storage/faiss/*
+!storage/faiss/.gitkeep
+
+# Generated metadata
+storage/metadata/*
+!storage/metadata/.gitkeep
+
+# Logs
+*.log
+
+
+
+
+# Python virtual environments
+myvenv1/
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Generated FAISS indexes
+storage/faiss/*
+!storage/faiss/.gitkeep
+
+# Generated metadata
+storage/metadata/*
+!storage/metadata/.gitkeep
+
+# Logs
+*.log

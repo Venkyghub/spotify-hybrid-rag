@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pydantic-settings
+python-multipart
+openai
+httpx
+pypdf
+neo4j
+faiss-cpu
