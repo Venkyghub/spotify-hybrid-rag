@@ -41,7 +41,22 @@ def retrieve_vector_context(
     index, chunks = load_faiss_index(index_path, metadata_path)
 
     # Generate an embedding only for the user's question.
-    query_embeddings = create_embeddings([question])
+    # Expand communication questions for retrieval only.
+    # Keep the original question unchanged for answer generation.
+    normalized_question = question.lower()
+    communication_terms = (
+        "communicate", "communication", "communicating", "interact"
+    )
+
+    retrieval_query = question
+    if any(term in normalized_question for term in communication_terms):
+        retrieval_query = (
+            question
+            + " HTTP APIs REST gRPC WebSocket message queues "
+              "Kafka events service notifications microservices"
+        )
+
+    query_embeddings = create_embeddings([retrieval_query])
 
     if not query_embeddings:
         return []

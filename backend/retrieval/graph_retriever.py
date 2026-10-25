@@ -5,17 +5,17 @@ from backend.knowledge_graph.neo4j_client import Neo4jClient
 
 
 def _extract_terms(question: str) -> list[str]:
-    """Extract useful query terms while excluding common stop words."""
-
+    """Extract meaningful terms from a question."""
     if not isinstance(question, str) or not question.strip():
         return []
 
     stop_words = {
-        "a", "an", "and", "are", "can", "could", "do", "does",
+        "a", "an", "and", "are", "by", "can", "could", "do", "does",
         "for", "how", "i", "in", "is", "it", "me", "of", "on",
         "or", "please", "the", "their", "them", "this", "to",
         "use", "used", "using", "what", "which", "with", "would",
         "support", "supports", "supporting",
+        "technology", "technologies",
     }
 
     words = re.findall(
@@ -24,8 +24,7 @@ def _extract_terms(question: str) -> list[str]:
     )
 
     return [
-        word
-        for word in dict.fromkeys(words)
+        word for word in dict.fromkeys(words)
         if word.lower() not in stop_words and len(word) > 1
     ]
 
@@ -35,16 +34,7 @@ def retrieve_graph_context(
     question: str,
     limit: int = 10,
 ) -> list[dict]:
-    """
-    Retrieve relevant graph entities, relationships, and evidence.
-
-    Evidence chunks are ranked by whether they mention both endpoints
-    of a relationship and whether they contain terms from the question.
-
-    Important:
-        Evidence ranking improves relevance but does not independently
-        prove that a chunk supports a particular graph relationship.
-    """
+    """Retrieve relevant graph relationships with unique evidence chunks."""
 
     if not isinstance(question, str) or not question.strip():
         raise ValueError("Question cannot be empty.")
@@ -53,63 +43,34 @@ def retrieve_graph_context(
         raise ValueError("limit must be between 1 and 50.")
 
     terms = _extract_terms(question)
-
     if not terms:
         return []
 
     query = """
-    MATCH (e)
+    MATCH (e)-[r:USES|SUPPORTS]->(related)
     WHERE e.name IS NOT NULL
+      AND related.name IS NOT NULL
+      AND (
+          any(term IN $terms
+              WHERE toLower(e.name) CONTAINS toLower(term))
+          OR any(term IN $terms
+              WHERE toLower(related.name) CONTAINS toLower(term))
+      )
       AND NOT e:DocumentChunk
       AND NOT e:ArchitectureDocument
-      AND any(
-          term IN $terms
-          WHERE toLower(e.name) CONTAINS toLower(term)
-      )
-
-    WITH DISTINCT e
-    LIMIT $limit
-
-    OPTIONAL MATCH (e)-[r:USES|SUPPORTS]-(related)
-    WHERE related.name IS NOT NULL
       AND NOT related:DocumentChunk
       AND NOT related:ArchitectureDocument
 
-    WITH e, r, related
+    MATCH (c:DocumentChunk)-[:MENTIONS]->(e)
+    WHERE toLower(coalesce(c.text, ''))
+          CONTAINS toLower(related.name)
 
-    OPTIONAL MATCH (c:DocumentChunk)-[:MENTIONS]->(e)
-    WHERE related IS NULL
-        OR toLower(coalesce(c.text, ''))
-           CONTAINS toLower(related.name)
-
-    WITH e, r, related, c,
-         CASE
-             WHEN c IS NULL THEN 0
-             ELSE
-                 CASE
-                     WHEN related IS NOT NULL
-                      AND toLower(coalesce(c.text, ''))
-                          CONTAINS toLower(e.name)
-                      AND toLower(coalesce(c.text, ''))
-                          CONTAINS toLower(related.name)
-                     THEN 3
-                     WHEN toLower(coalesce(c.text, ''))
-                          CONTAINS toLower(e.name)
-                     THEN 2
-                     ELSE 1
-                 END
-         END AS endpoint_score,
+    WITH DISTINCT e, r, related, c,
          size([
              term IN $terms
              WHERE toLower(coalesce(c.text, ''))
                    CONTAINS toLower(term)
-         ]) AS query_term_score
-
-    WITH e, r, related, c, endpoint_score, query_term_score
-    ORDER BY
-        endpoint_score DESC,
-        query_term_score DESC,
-        c.chunk_id ASC
+         ]) AS term_score
 
     RETURN
         labels(e) AS entity_labels,
@@ -120,19 +81,81 @@ def retrieve_graph_context(
         c.page AS page,
         c.chunk_id AS chunk_id,
         c.text AS evidence,
-        endpoint_score,
-        query_term_score
+        term_score
 
+    ORDER BY term_score DESC, c.page ASC, c.chunk_id ASC
     LIMIT $limit
     """
 
     records = client.execute_query(
         query,
-        {
-            "terms": terms,
-            "limit": limit,
-        },
+        {"terms": terms, "question": question, "limit": limit},
     )
+
+    # Also retrieve document chunks linked directly to graph evidence entities.
+    evidence_query = """
+    MATCH (c:DocumentChunk)-[:SUPPORTS_EVIDENCE]->(e)
+    WHERE e.name IS NOT NULL
+      AND any(term IN $terms
+              WHERE toLower(coalesce(e.name, '')) CONTAINS toLower(term))
+    WITH c, e,
+         size([
+             term IN $terms
+             WHERE toLower(coalesce(c.text, ''))
+                   CONTAINS toLower(term)
+         ]) AS term_score
+    RETURN
+        labels(e) AS entity_labels,
+        e.name AS entity,
+        'SUPPORTS_EVIDENCE' AS relationship,
+        e.name AS related_entity,
+        c.source AS source,
+        c.page AS page,
+        c.chunk_id AS chunk_id,
+        c.text AS evidence,
+        term_score
+    ORDER BY term_score DESC, c.page ASC, c.chunk_id ASC
+    LIMIT $limit
+    """
+
+    evidence_records = client.execute_query(
+        evidence_query,
+        {"terms": terms, "limit": limit},
+    )
+    records = list(records or []) + list(evidence_records or [])
+
+    # Fallback: retrieve relevant chunks through actual MENTIONS relationships.
+    if not records:
+        fallback_query = """
+        MATCH (c:DocumentChunk)-[:MENTIONS]->(e)
+        WHERE e.name IS NOT NULL
+          AND NOT e:DocumentChunk
+          AND NOT e:ArchitectureDocument
+        WITH c,
+             collect(DISTINCT e.name) AS entities,
+             size([
+                 term IN $terms
+                 WHERE toLower(coalesce(c.text, ''))
+                       CONTAINS toLower(term)
+             ]) AS term_score
+        WHERE term_score > 0
+        RETURN
+            labels(c) AS entity_labels,
+            'DocumentChunk' AS entity,
+            'MENTIONS' AS relationship,
+            entities AS related_entity,
+            c.source AS source,
+            c.page AS page,
+            c.chunk_id AS chunk_id,
+            c.text AS evidence,
+            term_score
+        ORDER BY term_score DESC, c.page ASC, c.chunk_id ASC
+        LIMIT $limit
+        """
+        records = client.execute_query(
+            fallback_query,
+            {"terms": terms, "limit": limit},
+        )
 
     results = []
     seen = set()
@@ -147,14 +170,10 @@ def retrieve_graph_context(
             "page": record.get("page"),
             "chunk_id": record.get("chunk_id"),
             "evidence": record.get("evidence"),
-            "endpoint_score": record.get("endpoint_score", 0),
-            "query_term_score": record.get("query_term_score", 0),
+            "query_term_score": record.get("term_score", 0),
         }
 
         key = (
-            result["entity"],
-            result["relationship"],
-            result["related_entity"],
             result["source"],
             result["chunk_id"],
         )

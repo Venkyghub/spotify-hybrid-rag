@@ -24,7 +24,7 @@ def _tokenize(text: str) -> set[str]:
 def grade_relevance(
     question: str,
     results: Sequence[Mapping],
-    min_relevance: float = 0.30,
+    min_relevance: float = 0.15,
 ) -> list[dict]:
     """
     Grade retrieved results using lexical evidence overlap.
@@ -53,6 +53,25 @@ def grade_relevance(
         raise ValueError("results must be a sequence of result dictionaries.")
 
     question_terms = _tokenize(question)
+
+    # Domain-aware expansion for common architecture terminology.
+    synonym_groups = [
+        {"authentication", "auth", "identity", "oauth2", "oidc", "jwt"},
+        {"database", "databases", "postgresql", "redis", "clickhouse"},
+        {
+            "communication", "communicate", "communicating", "messaging",
+            "events", "event", "rest", "grpc", "gateway", "http",
+            "websocket", "websockets", "queue", "queues", "kafka",
+            "nats", "rabbitmq", "microservice", "microservices",
+            "notify", "notifies", "notification", "notifications",
+        },
+        {"dependency", "dependencies", "depends", "dependent"},
+    ]
+
+    expanded_terms = set(question_terms)
+    for group in synonym_groups:
+        if expanded_terms & group:
+            expanded_terms.update(group)
 
     graded_results = []
 
@@ -93,7 +112,7 @@ def grade_relevance(
             score = 0.0
         else:
             score = (
-                len(question_terms & evidence_terms)
+                len(expanded_terms & evidence_terms)
                 / len(question_terms)
             )
 

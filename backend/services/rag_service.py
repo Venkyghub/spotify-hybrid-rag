@@ -90,7 +90,13 @@ def answer_question(
 
     # Initial retrieval plus at most max_retries additional attempts.
     while True:
-        current_top_k = min(top_k * attempt, 50)
+        question_lower = question.lower()
+        communication_intent = any(
+            term in question_lower
+            for term in ("communicate", "communication", "communicating", "interact")
+        )
+        retrieval_base = max(top_k, 10) if communication_intent else top_k
+        current_top_k = min(retrieval_base * attempt, 50)
 
         current_results = retrieve_hybrid_context(
             question=question.strip(),

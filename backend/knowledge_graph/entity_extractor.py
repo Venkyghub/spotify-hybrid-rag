@@ -124,6 +124,27 @@ ENTITY_CATALOG = {
         "aliases": ["Vault"],
         "category": "Secrets management",
     },
+    # Messaging and asynchronous communication
+    "Message Queue": {
+        "label": "Technology",
+        "aliases": ["Message Queue", "message bus", "event bus"],
+        "category": "Asynchronous messaging",
+    },
+    "Kafka": {
+        "label": "Technology",
+        "aliases": ["Kafka", "Apache Kafka"],
+        "category": "Event streaming",
+    },
+    "NATS": {
+        "label": "Technology",
+        "aliases": ["NATS"],
+        "category": "Messaging system",
+    },
+    "RabbitMQ": {
+        "label": "Technology",
+        "aliases": ["RabbitMQ", "Rabbit MQ"],
+        "category": "Message broker",
+    },
     # Architecture components and services
     "API Gateway": {
         "label": "Component",

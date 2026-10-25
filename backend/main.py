@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from backend.api.chat_routes import router as chat_router
+from backend.api.retrieval_routes import router as retrieval_router
+from backend.api.document_routes import router as document_router
 
 
 app = FastAPI(
@@ -9,6 +11,8 @@ app = FastAPI(
 )
 
 app.include_router(chat_router)
+app.include_router(retrieval_router)
+app.include_router(document_router)
 
 @app.get("/")
 def root():

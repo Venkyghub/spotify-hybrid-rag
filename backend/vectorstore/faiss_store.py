@@ -43,12 +43,13 @@ def build_faiss_index(
     index_path.parent.mkdir(parents=True, exist_ok=True)
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Write metadata first; replace it only after JSON serialization succeeds.
-    temp_metadata = metadata_path.with_suffix(metadata_path.suffix + ".tmp")
+    temp_metadata = metadata_path.with_suffix(
+        metadata_path.suffix + ".tmp"
+    )
     with temp_metadata.open("w", encoding="utf-8") as file:
         json.dump(chunks, file, ensure_ascii=False, indent=2)
-    temp_metadata.replace(metadata_path)
 
+    temp_metadata.replace(metadata_path)
     faiss.write_index(index, str(index_path))
 
 
@@ -118,3 +119,73 @@ def search_faiss(
         })
 
     return results
+
+
+def append_faiss_index(
+    chunks: list[dict],
+    embeddings: list[list[float]],
+    index_path: str | Path,
+    metadata_path: str | Path,
+) -> None:
+    """Append new chunks without replacing existing FAISS vectors."""
+
+    if not chunks:
+        raise ValueError("Cannot append an empty chunk list.")
+
+    if len(chunks) != len(embeddings):
+        raise ValueError("Chunk count must match embedding count.")
+
+    index_path = Path(index_path)
+    metadata_path = Path(metadata_path)
+
+    index, existing_chunks = load_faiss_index(
+        index_path, metadata_path
+    )
+
+    vectors = np.asarray(embeddings, dtype=np.float32)
+
+    if vectors.ndim != 2 or vectors.shape[0] == 0:
+        raise ValueError("Embeddings must form a non-empty 2D matrix.")
+
+    if vectors.shape[1] != index.d:
+        raise ValueError("New embedding dimensions do not match the index.")
+
+    if not np.isfinite(vectors).all():
+        raise ValueError("Embeddings contain non-finite values.")
+
+    if not np.all(np.linalg.norm(vectors, axis=1) > 0):
+        raise ValueError("Embeddings must not contain zero vectors.")
+
+    faiss.normalize_L2(vectors)
+
+    # Work on a copy so validation or writing errors don't alter the loaded index.
+    updated_index = faiss.clone_index(index)
+    updated_index.add(vectors)
+    updated_chunks = existing_chunks + chunks
+
+    temp_index = index_path.with_suffix(index_path.suffix + ".tmp")
+    temp_metadata = metadata_path.with_suffix(
+        metadata_path.suffix + ".tmp"
+    )
+
+    try:
+        faiss.write_index(updated_index, str(temp_index))
+
+        with temp_metadata.open("w", encoding="utf-8") as file:
+            json.dump(updated_chunks, file, ensure_ascii=False, indent=2)
+
+        # Verify the temporary index before publishing either file.
+        check_index = faiss.read_index(str(temp_index))
+        with temp_metadata.open("r", encoding="utf-8") as file:
+            check_chunks = json.load(file)
+
+        if check_index.ntotal != len(check_chunks):
+            raise ValueError("Updated index and metadata counts do not match.")
+
+        temp_index.replace(index_path)
+        temp_metadata.replace(metadata_path)
+
+    finally:
+        for temp_file in (temp_index, temp_metadata):
+            if temp_file.exists():
+                temp_file.unlink()
